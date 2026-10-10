@@ -18,8 +18,17 @@ class Program
 
         builder.Services.AddDbContext<MonitoringContext>(o => o.UseNpgsql(cs));
         builder.Services.AddValidation();
-        builder.Services.AddProblemDetails();
+        builder.Services.AddProblemDetails(o =>
+            o.CustomizeProblemDetails = ctx =>
+            {
+                if (ctx.ProblemDetails.Status is < 500)
+                    ctx.ProblemDetails.Extensions.Remove("traceId");
+            }
+        );
         var app = builder.Build();
+
+        app.UseExceptionHandler();
+        app.UseStatusCodePages();
 
         app.MapGet("/", () => "Hello World!");
         app.MapGet(

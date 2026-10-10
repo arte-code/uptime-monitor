@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: "postgres:18"
+    environment:
+      - "POSTGRES_DB=uptime_monitor"
+      - "POSTGRES_PASSWORD=postgres"
+      - "POSTGRES_USER=postgres"
+    ports:
+      - "9800:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d events_booking"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

@@ -1,6 +1,11 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using UptimeMonitor.Auth;
 using UptimeMonitor.Data;
 using UptimeMonitor.DTO;
 using UptimeMonitor.Models;
@@ -36,44 +41,85 @@ class Program
 
         builder.Services.AddSingleton<TokenService>();
 
+        var jwtKey =
+            builder.Configuration["Jwt:Key"]
+            ?? throw new InvalidOperationException("Jwt:Key is not configured.");
+
+        builder
+            .Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.MapInboundClaims = false;
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                    ValidateAudience = true,
+                    ValidAudience = builder.Configuration["Jwt:Audience"],
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromSeconds(30),
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Convert.FromBase64String(jwtKey)),
+                    ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+                };
+            });
+
+        builder.Services.AddAuthorization();
+
         var app = builder.Build();
 
         app.UseExceptionHandler();
         app.UseStatusCodePages();
 
         app.MapGet("/", () => "Hello World!");
-        app.MapGet(
-            "/monitors",
-            async (MonitoringContext db) =>
+
+        var monitors = app.MapGroup("/monitors").RequireAuthorization();
+
+        monitors.MapGet(
+            "/",
+            async (MonitoringContext db, ClaimsPrincipal user) =>
             {
+                var userId = user.GetUserId();
                 return await db
-                    .Monitors.OrderBy(m => m.Id)
+                    .Monitors.Where(m => m.UserId == userId)
+                    .OrderBy(m => m.Id)
                     .Select(m => new GetMonitorDto(m.Id, m.Name, m.TargetUrl))
                     .ToListAsync();
             }
         );
-        //   app.MapPost(
-        //"/monitors",
-        //  async (MonitoringContext db, SetMonitorDto dto) =>
-        //    {
-        //          var monitor = db.Monitors.Add(
-        //                new MonitorTarget { Name = dto.Name, TargetUrl = dto.TargetUrl }
-        //              );
-        //
-        //var entity = monitor.Entity;
-        //  await db.SaveChangesAsync();
-        //    return TypedResults.Ok(new GetMonitorDto(entity.Id, entity.Name, entity.TargetUrl));
-        //  }
-        //);
-        app.MapPut(
-            "/monitors/{id}",
+        monitors.MapPost(
+            "/",
+            async (MonitoringContext db, SetMonitorDto dto, ClaimsPrincipal user) =>
+            {
+                var userId = user.GetUserId();
+                var monitor = db.Monitors.Add(
+                    new MonitorTarget
+                    {
+                        Name = dto.Name,
+                        TargetUrl = dto.TargetUrl,
+                        UserId = userId,
+                    }
+                );
+
+                var entity = monitor.Entity;
+                await db.SaveChangesAsync();
+                return TypedResults.Ok(new GetMonitorDto(entity.Id, entity.Name, entity.TargetUrl));
+            }
+        );
+        monitors.MapPut(
+            "/{id}",
             async Task<Results<NotFound, Ok<GetMonitorDto>>> (
                 MonitoringContext db,
+                ClaimsPrincipal user,
                 SetMonitorDto dto,
                 int id
             ) =>
             {
-                var monitor = await db.Monitors.FindAsync(id);
+                var userId = user.GetUserId();
+                var monitor = await db.Monitors.FirstOrDefaultAsync(m =>
+                    m.Id == id && m.UserId == userId
+                );
+
                 if (monitor == null)
                 {
                     return TypedResults.NotFound();
@@ -88,11 +134,19 @@ class Program
                 );
             }
         );
-        app.MapDelete(
-            "/monitors/{id}",
-            async Task<Results<NotFound, NoContent>> (MonitoringContext db, int id) =>
+        monitors.MapDelete(
+            "/{id}",
+            async Task<Results<NotFound, NoContent>> (
+                MonitoringContext db,
+                ClaimsPrincipal user,
+                int id
+            ) =>
             {
-                var monitor = await db.Monitors.FindAsync(id);
+                var userId = user.GetUserId();
+
+                var monitor = await db.Monitors.FirstOrDefaultAsync(m =>
+                    m.Id == id && m.UserId == userId
+                );
                 if (monitor == null)
                 {
                     return TypedResults.NotFound();

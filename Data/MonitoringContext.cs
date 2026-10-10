@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using UptimeMonitor.Models;
 
@@ -10,7 +8,7 @@ public class MonitoringContext : DbContext
     public MonitoringContext(DbContextOptions<MonitoringContext> options)
         : base(options) { }
 
-    public DbSet<MonitorTarget> Monitors { get; set; }
+    public DbSet<MonitorTarget> Monitors => Set<MonitorTarget>();
     public DbSet<User> Users => Set<User>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

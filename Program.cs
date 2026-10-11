@@ -9,16 +9,14 @@ using UptimeMonitor.Data;
 using UptimeMonitor.DTO;
 using UptimeMonitor.Models;
 using UptimeMonitor.Services;
+using UptimeMonitor.Workers;
 using BC = BCrypt.Net.BCrypt;
 
 namespace UptimeMonitor;
 
 class Program
 {
-    private static readonly string DummyHash = BC.EnhancedHashPassword(
-        "not-a-real-password",
-        workFactor: 12
-    );
+    private static readonly string DummyHash = BC.EnhancedHashPassword("not-a-real-password", workFactor: 12);
 
     static void Main(string[] args)
     {
@@ -40,9 +38,7 @@ class Program
 
         builder.Services.AddSingleton<TokenService>();
 
-        var jwtKey =
-            builder.Configuration["Jwt:Key"]
-            ?? throw new InvalidOperationException("Jwt:Key is not configured.");
+        var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured.");
 
         builder
             .Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -64,6 +60,14 @@ class Program
             });
 
         builder.Services.AddAuthorization();
+        builder.Services.AddHttpClient(
+            "monitor",
+            client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(10);
+            }
+        );
+        builder.Services.AddHostedService<CheckWorker>();
 
         var app = builder.Build();
 
@@ -86,6 +90,40 @@ class Program
                     .ToListAsync();
             }
         );
+
+        monitors.MapGet(
+            "/{monitorId}/checks",
+            async Task<Results<NotFound, Ok<List<CheckOutcomeDto>>>> (
+                MonitoringContext db,
+                ClaimsPrincipal user,
+                Guid monitorId
+            ) =>
+            {
+                var userId = user.GetUserId();
+                var monitor = await db.Monitors.FirstOrDefaultAsync(m => m.UserId == userId && m.Id == monitorId);
+
+                if (monitor == null)
+                {
+                    return TypedResults.NotFound();
+                }
+
+                var checks = await db
+                    .CheckResults.AsNoTracking()
+                    .Where(c => c.MonitorTargetId == monitor.Id)
+                    .Select(c => new CheckOutcomeDto(
+                        c.CheckedAt,
+                        c.IsUp,
+                        c.StatusCode,
+                        c.ResponseTimeMs,
+                        c.FailureReason,
+                        c.MonitorTargetId
+                    ))
+                    .ToListAsync();
+
+                return TypedResults.Ok(checks);
+            }
+        );
+
         monitors.MapPost(
             "/",
             async (MonitoringContext db, SetMonitorDto dto, ClaimsPrincipal user) =>
@@ -106,18 +144,16 @@ class Program
             }
         );
         monitors.MapPut(
-            "/{id}",
+            "/{monitorId}",
             async Task<Results<NotFound, Ok<GetMonitorDto>>> (
                 MonitoringContext db,
                 ClaimsPrincipal user,
                 SetMonitorDto dto,
-                int id
+                Guid monitorId
             ) =>
             {
                 var userId = user.GetUserId();
-                var monitor = await db.Monitors.FirstOrDefaultAsync(m =>
-                    m.Id == id && m.UserId == userId
-                );
+                var monitor = await db.Monitors.FirstOrDefaultAsync(m => m.Id == monitorId && m.UserId == userId);
 
                 if (monitor == null)
                 {
@@ -128,24 +164,16 @@ class Program
                 monitor.TargetUrl = dto.TargetUrl;
 
                 await db.SaveChangesAsync();
-                return TypedResults.Ok(
-                    new GetMonitorDto(monitor.Id, monitor.Name, monitor.TargetUrl)
-                );
+                return TypedResults.Ok(new GetMonitorDto(monitor.Id, monitor.Name, monitor.TargetUrl));
             }
         );
         monitors.MapDelete(
-            "/{id}",
-            async Task<Results<NotFound, NoContent>> (
-                MonitoringContext db,
-                ClaimsPrincipal user,
-                int id
-            ) =>
+            "/{monitorId}",
+            async Task<Results<NotFound, NoContent>> (MonitoringContext db, ClaimsPrincipal user, Guid monitorId) =>
             {
                 var userId = user.GetUserId();
 
-                var monitor = await db.Monitors.FirstOrDefaultAsync(m =>
-                    m.Id == id && m.UserId == userId
-                );
+                var monitor = await db.Monitors.FirstOrDefaultAsync(m => m.Id == monitorId && m.UserId == userId);
                 if (monitor == null)
                 {
                     return TypedResults.NotFound();
@@ -161,25 +189,15 @@ class Program
 
         auth.MapPost(
             "/register",
-            async Task<Results<Ok<UserResponse>, ProblemHttpResult>> (
-                MonitoringContext db,
-                RegisterRequest req
-            ) =>
+            async Task<Results<Ok<UserResponse>, ProblemHttpResult>> (MonitoringContext db, RegisterRequest req) =>
             {
                 var email = req.Email.Trim().ToLowerInvariant();
 
                 if (await db.Users.AnyAsync(u => u.Email == email))
                 {
-                    return TypedResults.Problem(
-                        statusCode: StatusCodes.Status409Conflict,
-                        title: "Email is already registered."
-                    );
+                    return TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: "Email is already registered.");
                 }
-                var user = new User
-                {
-                    Email = email,
-                    PasswordHash = BC.EnhancedHashPassword(req.Password, workFactor: 12),
-                };
+                var user = new User { Email = email, PasswordHash = BC.EnhancedHashPassword(req.Password, workFactor: 12) };
 
                 db.Users.Add(user);
 
@@ -188,14 +206,9 @@ class Program
                     await db.SaveChangesAsync();
                 }
                 catch (DbUpdateException ex)
-                    when (ex.InnerException
-                            is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation }
-                    )
+                    when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
                 {
-                    return TypedResults.Problem(
-                        statusCode: StatusCodes.Status409Conflict,
-                        title: "Email is already registered."
-                    );
+                    return TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: "Email is already registered.");
                 }
 
                 return TypedResults.Ok(new UserResponse(user.Id, user.Email));

@@ -12,7 +12,7 @@ using UptimeMonitor.Data;
 namespace UptimeMonitor.Migrations
 {
     [DbContext(typeof(MonitoringContext))]
-    [Migration("20261010155912_InitialCreate")]
+    [Migration("20261011181554_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -25,13 +25,44 @@ namespace UptimeMonitor.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("UptimeMonitor.Models.MonitorTarget", b =>
+            modelBuilder.Entity("UptimeMonitor.Models.CheckResult", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CheckedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsUp")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("MonitorTargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("ResponseTimeMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MonitorTargetId");
+
+                    b.ToTable("CheckResults");
+                });
+
+            modelBuilder.Entity("UptimeMonitor.Models.MonitorTarget", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -74,6 +105,17 @@ namespace UptimeMonitor.Migrations
                         .IsUnique();
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("UptimeMonitor.Models.CheckResult", b =>
+                {
+                    b.HasOne("UptimeMonitor.Models.MonitorTarget", "MonitorTarget")
+                        .WithMany()
+                        .HasForeignKey("MonitorTargetId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MonitorTarget");
                 });
 
             modelBuilder.Entity("UptimeMonitor.Models.MonitorTarget", b =>

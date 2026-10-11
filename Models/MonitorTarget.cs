@@ -2,7 +2,8 @@ namespace UptimeMonitor.Models;
 
 public class MonitorTarget
 {
-    public int Id { set; get; }
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+
     public required string Name { set; get; }
     public required string TargetUrl { set; get; }
 

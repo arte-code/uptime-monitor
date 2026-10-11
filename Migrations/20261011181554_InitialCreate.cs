@@ -30,8 +30,7 @@ namespace UptimeMonitor.Migrations
                 name: "Monitors",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
                     Name = table.Column<string>(type: "text", nullable: false),
                     TargetUrl = table.Column<string>(type: "text", nullable: false),
                     UserId = table.Column<Guid>(type: "uuid", nullable: false)
@@ -46,6 +45,35 @@ namespace UptimeMonitor.Migrations
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
+
+            migrationBuilder.CreateTable(
+                name: "CheckResults",
+                columns: table => new
+                {
+                    Id = table.Column<int>(type: "integer", nullable: false)
+                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    CheckedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    IsUp = table.Column<bool>(type: "boolean", nullable: false),
+                    StatusCode = table.Column<int>(type: "integer", nullable: true),
+                    ResponseTimeMs = table.Column<long>(type: "bigint", nullable: true),
+                    FailureReason = table.Column<string>(type: "text", nullable: true),
+                    MonitorTargetId = table.Column<Guid>(type: "uuid", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_CheckResults", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_CheckResults_Monitors_MonitorTargetId",
+                        column: x => x.MonitorTargetId,
+                        principalTable: "Monitors",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_CheckResults_MonitorTargetId",
+                table: "CheckResults",
+                column: "MonitorTargetId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_Monitors_UserId",
@@ -62,6 +90,9 @@ namespace UptimeMonitor.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "CheckResults");
+
             migrationBuilder.DropTable(
                 name: "Monitors");
 

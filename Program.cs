@@ -61,13 +61,6 @@ class Program
             });
 
         builder.Services.AddAuthorization();
-        builder.Services.AddHttpClient(
-            "monitor",
-            client =>
-            {
-                client.Timeout = TimeSpan.FromSeconds(10);
-            }
-        );
         builder.Services.AddHostedService<CheckWorker>();
 
         builder.Services.ConfigureHttpJsonOptions(options =>

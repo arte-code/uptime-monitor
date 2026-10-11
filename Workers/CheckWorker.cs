@@ -9,13 +9,17 @@ class CheckWorker : BackgroundService
 {
     private readonly ILogger<CheckWorker> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly HttpClient _sharedClient;
+    private readonly HttpClient _sharedClient = new HttpClient(
+        new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) }
+    )
+    {
+        Timeout = TimeSpan.FromSeconds(10),
+    };
 
-    public CheckWorker(ILogger<CheckWorker> logger, IServiceScopeFactory scopeFactory, HttpClient sharedClient)
+    public CheckWorker(ILogger<CheckWorker> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
-        _sharedClient = sharedClient;
     }
 
     private async Task<CheckResult> CheckMonitorAsync(string targetUrl, Guid monitorId, CancellationToken ct)

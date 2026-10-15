@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -39,6 +41,38 @@ class Program
 
         builder.Services.AddSingleton<TokenService>();
 
+        builder.Services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.AddPolicy(
+                "auth",
+                httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            Window = TimeSpan.FromSeconds(5),
+                            PermitLimit = 2,
+                            QueueLimit = 0,
+                        }
+                    )
+            );
+
+            options.AddPolicy(
+                "general",
+                httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            Window = TimeSpan.FromMinutes(1),
+                            PermitLimit = 100,
+                            QueueLimit = 0,
+                        }
+                    )
+            );
+        });
+
         var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured.");
 
         builder
@@ -72,10 +106,11 @@ class Program
 
         app.UseExceptionHandler();
         app.UseStatusCodePages();
+        app.UseRateLimiter();
 
         app.MapGet("/", () => "Hello World!");
 
-        var monitors = app.MapGroup("/monitors").RequireAuthorization();
+        var monitors = app.MapGroup("/monitors").RequireAuthorization().RequireRateLimiting("general");
 
         monitors.MapGet(
             "/",
@@ -184,7 +219,7 @@ class Program
             }
         );
 
-        var auth = app.MapGroup("/auth");
+        var auth = app.MapGroup("/auth").RequireRateLimiting("auth");
 
         auth.MapPost(
             "/register",

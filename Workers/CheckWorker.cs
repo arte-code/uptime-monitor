@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using UptimeMonitor.Data;
 
@@ -22,7 +23,15 @@ class CheckWorker : BackgroundService
         _scopeFactory = scopeFactory;
     }
 
-    private async Task<CheckResult> CheckMonitorAsync(string targetUrl, Guid monitorId, CancellationToken ct)
+    private record ProbeResult(
+        DateTime CheckedAt,
+        bool IsUp,
+        int? StatusCode,
+        long? ResponseTimeMs,
+        FailureReason? FailureReason
+    );
+
+    private async Task<ProbeResult> CheckMonitorAsync(string targetUrl, CancellationToken ct)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -63,20 +72,12 @@ class CheckWorker : BackgroundService
         {
             sw.Stop();
         }
-        return new CheckResult
-        {
-            CheckedAt = checkedAt,
-            IsUp = isUp,
-            StatusCode = statusCode,
-            ResponseTimeMs = sw.ElapsedMilliseconds,
-            MonitorTargetId = monitorId,
-            FailureReason = failureReason,
-        };
+        return new ProbeResult(checkedAt, isUp, statusCode, sw.ElapsedMilliseconds, failureReason);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(300));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
 
         while (await timer.WaitForNextTickAsync(ct))
         {
@@ -102,8 +103,30 @@ class CheckWorker : BackgroundService
 
         var monitors = await db.Monitors.AsNoTracking().Select(m => new { m.Id, m.TargetUrl }).ToListAsync();
 
-        var tasks = monitors.Select(m => CheckMonitorAsync(m.TargetUrl, m.Id, ct)).ToList();
-        var results = await Task.WhenAll(tasks);
+        var results = new ConcurrentBag<CheckResult>();
+        var options = new ParallelOptions { MaxDegreeOfParallelism = 20, CancellationToken = ct };
+
+        await Parallel.ForEachAsync(
+            monitors.GroupBy(m => m.TargetUrl),
+            options,
+            async (group, token) =>
+            {
+                var r = await CheckMonitorAsync(group.Key, token);
+                foreach (var m in group)
+                {
+                    results.Add(
+                        new CheckResult
+                        {
+                            MonitorTargetId = m.Id,
+                            CheckedAt = r.CheckedAt,
+                            IsUp = r.IsUp,
+                            ResponseTimeMs = r.ResponseTimeMs,
+                            FailureReason = r.FailureReason,
+                        }
+                    );
+                }
+            }
+        );
 
         db.CheckResults.AddRange(results);
         await db.SaveChangesAsync();

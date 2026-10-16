@@ -77,7 +77,7 @@ class CheckWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(300));
 
         while (await timer.WaitForNextTickAsync(ct))
         {
